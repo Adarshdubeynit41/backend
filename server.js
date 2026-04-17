@@ -1,5 +1,5 @@
 /*
-  ESP32 Safety Monitor — Cloud Backend + Twilio Alerts
+  ESP32 Safety Monitor — Backend + Twilio (FINAL)
 */
 
 const express   = require('express');
@@ -23,10 +23,10 @@ const app    = express();
 const server = http.createServer(app);
 const wss    = new WebSocketServer({ server, path: '/ws' });
 
-const API_KEY = process.env.API_KEY || 'change-me-to-something-secret';
+const API_KEY = process.env.API_KEY || '123456';
 const PORT    = process.env.PORT    || 3000;
 
-// ─── In-memory state ────────────────────────────────
+// ─── State ──────────────────────────────────────────
 let latest = {
   gasValue:      0,
   gasDetected:   false,
@@ -39,10 +39,8 @@ let latest = {
 let lastSeenAt = 0;
 const OFFLINE_TIMEOUT = 5000;
 
-// 🚨 Alert control
+// 🚨 Alert control (NO SPAM)
 let lastAlertState = false;
-let lastAlertTime  = 0;
-const ALERT_COOLDOWN = 60000; // 1 min
 
 // ─── Middleware ─────────────────────────────────────
 app.use(cors());
@@ -82,28 +80,23 @@ app.post('/api/data', requireApiKey, (req, res) => {
     online:      true,
   };
 
-  // ─── 🚨 ALERT LOGIC ───────────────────────────────
+  // ─── 🚨 ALERT LOGIC (ONLY ON NEW ALERT) ───────────
   const alertActive = gasDetected || flameDetected;
-  const now = Date.now();
 
-  const shouldTrigger =
-    alertActive &&
-    (!lastAlertState || (now - lastAlertTime > ALERT_COOLDOWN));
+  if (alertActive && !lastAlertState) {
 
-  if (shouldTrigger) {
-    let message = "🚨 SAFETY ALERT!\n";
+    // 📲 Custom SMS Message
+    let message = "";
 
     if (gasDetected && flameDetected) {
-      message += "DANGER: Gas + Fire!";
+      message = "Emergency Alert! Gas or Fire may be present. Immediate action required.";
     } else if (gasDetected) {
-      message += "Gas Leak Detected!";
+      message = "Emergency Alert! Gas value is high. Immediate action required.";
     } else if (flameDetected) {
-      message += "Fire Detected!";
+      message = "Emergency Alert! Fire value is high. Immediate action required.";
     }
 
-    message += `\nGas Value: ${gasValue}`;
-
-    // 📲 SMS
+    // 📲 SEND SMS
     client.messages.create({
       body: message,
       from: TWILIO_PHONE,
@@ -112,16 +105,20 @@ app.post('/api/data', requireApiKey, (req, res) => {
     .then(() => console.log("[TWILIO] SMS sent"))
     .catch(err => console.error("[TWILIO] SMS error:", err.message));
 
-    // 📞 CALL
+    // 📞 CALL WITH VOICE ALERT
     client.calls.create({
-      url: "http://demo.twilio.com/docs/voice.xml",
+      twiml: `
+        <Response>
+          <Say voice="alice">
+            Emergency Alert! Gas or fire has been detected. Please check immediately.
+          </Say>
+        </Response>
+      `,
       to: ALERT_PHONE,
       from: TWILIO_PHONE
     })
     .then(() => console.log("[TWILIO] Call triggered"))
     .catch(err => console.error("[TWILIO] Call error:", err.message));
-
-    lastAlertTime = now;
   }
 
   lastAlertState = alertActive;
